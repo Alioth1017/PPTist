@@ -3,6 +3,7 @@ import { storeToRefs } from 'pinia'
 import { useKeyboardStore, useMainStore, useSlidesStore } from '@/store'
 import type { PPTElement, PPTLineElement } from '@/types/slides'
 import { OperateLineHandlers } from '@/types/edit'
+import { getBroken2LineDirection } from '@/utils/element'
 import useHistorySnapshot from '@/hooks/useHistorySnapshot'
 
 interface AdsorptionPoint {
@@ -13,6 +14,7 @@ interface AdsorptionPoint {
 export default (elementList: Ref<PPTElement[]>) => {
   const slidesStore = useSlidesStore()
   const { canvasScale } = storeToRefs(useMainStore())
+  const { viewportSize, viewportRatio } = storeToRefs(slidesStore)
   const { ctrlOrShiftKeyActive } = storeToRefs(useKeyboardStore())
   const { addHistorySnapshot } = useHistorySnapshot()
 
@@ -26,6 +28,19 @@ export default (elementList: Ref<PPTElement[]>) => {
     const startPageY = e.pageY
 
     const adsorptionPoints: AdsorptionPoint[] = []
+    const canvasWidth = viewportSize.value
+    const canvasHeight = viewportSize.value * viewportRatio.value
+
+    adsorptionPoints.push(
+      { x: 0, y: 0 },
+      { x: canvasWidth / 2, y: 0 },
+      { x: canvasWidth, y: 0 },
+      { x: 0, y: canvasHeight / 2 },
+      { x: canvasWidth, y: canvasHeight / 2 },
+      { x: 0, y: canvasHeight },
+      { x: canvasWidth / 2, y: canvasHeight },
+      { x: canvasWidth, y: canvasHeight },
+    )
 
     // 获取所有线条以外的未旋转的元素的8个缩放点作为吸附位置
     for (let i = 0; i < elementList.value.length; i++) {
@@ -198,7 +213,8 @@ export default (elementList: Ref<PPTElement[]>) => {
             if (element.broken) newEl.broken = [midX - minX, midY - minY]
             if (element.curve) newEl.curve = [midX - minX, midY - minY]
             if (element.broken2) {
-              if (maxX - minX >= maxY - minY) newEl.broken2 = [midX - minX, newEl.broken2![1]]
+              const direction = getBroken2LineDirection(element)
+              if (direction === 'horizontal') newEl.broken2 = [midX - minX, newEl.broken2![1]]
               else newEl.broken2 = [newEl.broken2![0], midY - minY]
             }
           }

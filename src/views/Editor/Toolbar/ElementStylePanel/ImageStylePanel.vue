@@ -8,8 +8,8 @@
     <ElementFlip />
 
     <ButtonGroup class="row" passive>
-      <Button first style="width: calc(100% / 6 * 5);" @click="clipImage()"><IconTailoring /> 裁剪图片</Button>
-      <Popover trigger="click" v-model:value="clipPanelVisible" style="width: calc(100% / 6);">
+      <Button first style="width: calc(100% - 32px);" @click="clipImage()"><i-icon-park-outline:tailoring /> 裁剪图片</Button>
+      <Popover trigger="click" v-model:value="clipPanelVisible" style="width: 32px;">
         <template #content>
           <div class="clip">
             <div class="title">按形状：</div>
@@ -37,7 +37,7 @@
             </template>
           </div>
         </template>
-        <Button last class="popover-btn" style="width: 100%;"><IconDown /></Button>
+        <Button last class="popover-btn"><i-icon-park-outline:down /></Button>
       </Popover>
     </ButtonGroup>
     
@@ -61,10 +61,10 @@
     <Divider />
     
     <FileInput @change="files => replaceImage(files)">
-      <Button class="full-width-btn"><IconTransform /> 替换图片</Button>
+      <Button class="full-width-btn"><i-icon-park-outline:transform /> 替换图片</Button>
     </FileInput>
-    <Button class="full-width-btn" @click="resetImage()"><IconUndo /> 重置样式</Button>
-    <Button class="full-width-btn" @click="setBackgroundImage()"><IconTheme /> 设为背景</Button>
+    <Button class="full-width-btn" @click="resetImage()"><i-icon-park-outline:undo /> 重置样式</Button>
+    <Button class="full-width-btn" @click="setBackgroundImage()"><i-icon-park-outline:theme /> 设为背景</Button>
   </div>
 </template>
 
@@ -74,8 +74,8 @@ import { storeToRefs } from 'pinia'
 import { useMainStore, useSlidesStore } from '@/store'
 import type { PPTImageElement, SlideBackground } from '@/types/slides'
 import { CLIPPATHS } from '@/configs/imageClip'
-import { getImageDataURL, getImageSize } from '@/utils/image'
 import useHistorySnapshot from '@/hooks/useHistorySnapshot'
+import useImageHandler from '@/hooks/useImageHandler'
 
 import ElementOutline from '../common/ElementOutline.vue'
 import ElementShadow from '../common/ElementShadow.vue'
@@ -133,6 +133,7 @@ const handleImageElement = handleElement as Ref<PPTImageElement>
 const clipPanelVisible = ref(false)
 
 const { addHistorySnapshot } = useHistorySnapshot()
+const { replaceImage } = useImageHandler()
 
 // 打开自由裁剪
 const clipImage = () => {
@@ -217,39 +218,6 @@ const presetImageClip = (shape: string, ratio = 0) => {
   clipImage()
 }
 
-// 替换图片（保持当前的样式）
-const replaceImage = (files: FileList) => {
-  const imageFile = files[0]
-  if (!imageFile) return
-  getImageDataURL(imageFile).then(dataURL => {
-    const originWidth = handleImageElement.value.width
-    const originHeight = handleImageElement.value.height
-    const originLeft = handleImageElement.value.left
-    const originTop = handleImageElement.value.top
-    const centerX = originLeft + originWidth / 2
-    const centerY = originTop + originHeight / 2
-
-    getImageSize(dataURL).then(({ width, height }) => {
-      const h = originHeight
-      const w = width * (originHeight / height)
-      const l = centerX - w / 2
-      const t = centerY - h / 2
-
-      slidesStore.removeElementProps({
-        id: handleElementId.value,
-        propName: 'clip',
-      })
-      updateImage({
-        src: dataURL,
-        width: w,
-        height: h,
-        left: l,
-        top: t,
-      })
-    })
-  })
-}
-
 // 重置图片：清除全部样式
 const resetImage = () => {
   const _handleElement = handleElement.value as PPTImageElement
@@ -318,7 +286,7 @@ const setBackgroundImage = () => {
 }
 
 .clip {
-  width: 260px;
+  width: 250px;
   font-size: 12px;
 
   .title {
@@ -349,6 +317,7 @@ const setBackgroundImage = () => {
   }
 }
 .popover-btn {
+  width: 100%;
   padding: 0 3px;
 }
 </style>

@@ -103,6 +103,10 @@ export interface PPTElementLink {
   target: string
 }
 
+export type TextAlign = 'left' | 'center' | 'right' | 'justify'
+
+export type TextAlignVertical = 'top' | 'middle' | 'bottom' 
+
 
 /**
  * 元素通用属性
@@ -142,6 +146,7 @@ interface PPTBaseElement {
 
 
 export type TextType = 'title' | 'subtitle' | 'content' | 'item' | 'itemTitle' | 'notes' | 'header' | 'footer' | 'partNumber' | 'itemNumber'
+export type TextInset = [number, number, number, number]
 
 /**
  * 文本元素
@@ -166,11 +171,17 @@ export type TextType = 'title' | 'subtitle' | 'content' | 'item' | 'itemTitle' |
  * 
  * shadow?: 阴影
  * 
- * paragraphSpace?: 段间距，默认 5px
+ * paragraphSpace?: 段间距，默认5px
  * 
  * vertical?: 竖向文本
  * 
  * textType?: 文本类型
+ * 
+ * inset?: 内边距（上、右、下、左），默认[10, 10, 10, 10]
+ *
+ * fixedHeight?: 固定文本框自适应轴尺寸，横排文本固定高度，竖排文本固定宽度
+ *
+ * vAlign?: 文本框内垂直对齐方向，仅fixedHeight为真时有效，默认top
  */
 export interface PPTTextElement extends PPTBaseElement {
   type: 'text'
@@ -186,6 +197,9 @@ export interface PPTTextElement extends PPTBaseElement {
   paragraphSpace?: number
   vertical?: boolean
   textType?: TextType
+  inset?: TextInset
+  fixedHeight?: boolean
+  vAlign?: TextAlignVertical
 }
 
 
@@ -291,8 +305,6 @@ export interface PPTImageElement extends PPTBaseElement {
   imageType?: ImageType
 }
 
-export type ShapeTextAlign = 'top' | 'middle' | 'bottom' 
-
 /**
  * 形状内文本
  * 
@@ -308,18 +320,21 @@ export type ShapeTextAlign = 'top' | 'middle' | 'bottom'
  * 
  * wordSpace?: 字间距，默认0
  * 
- * paragraphSpace?: 段间距，默认 5px
+ * paragraphSpace?: 段间距，默认5px
  * 
  * type: 文本类型
+ * 
+ * inset?: 文本内边距（上、右、下、左），默认[10, 10, 10, 10]
  */
 export interface ShapeText {
   content: string
   defaultFontName: string
   defaultColor: string
-  align: ShapeTextAlign
+  align: TextAlignVertical
   lineHeight?: number
   wordSpace?: number
   paragraphSpace?: number
+  inset?: TextInset
   type?: TextType
 }
 
@@ -381,6 +396,7 @@ export interface PPTShapeElement extends PPTBaseElement {
 
 
 export type LinePoint = '' | 'arrow' | 'dot' 
+export type Broken2LineDirection = 'horizontal' | 'vertical'
 
 /**
  * 线条元素
@@ -403,6 +419,8 @@ export type LinePoint = '' | 'arrow' | 'dot'
  * 
  * broken2?: 双折线控制点位置（[x, y]）
  * 
+ * broken2Direction?: 双折线方向
+ * 
  * curve?: 二次曲线控制点位置（[x, y]）
  * 
  * cubic?: 三次曲线控制点位置（[[x1, y1], [x2, y2]]）
@@ -417,6 +435,7 @@ export interface PPTLineElement extends Omit<PPTBaseElement, 'height' | 'rotate'
   shadow?: PPTElementShadow
   broken?: [number, number]
   broken2?: [number, number]
+  broken2Direction?: Broken2LineDirection
   curve?: [number, number]
   cubic?: [[number, number], [number, number]]
 }
@@ -469,7 +488,6 @@ export interface PPTChartElement extends PPTBaseElement {
 }
 
 
-export type TextAlign = 'left' | 'center' | 'right' | 'justify'
 /**
  * 表格单元格样式
  * 
@@ -501,6 +519,7 @@ export interface TableCellStyle {
   fontsize?: string
   fontname?: string
   align?: TextAlign
+  vAlign?: TextAlignVertical
 }
 
 

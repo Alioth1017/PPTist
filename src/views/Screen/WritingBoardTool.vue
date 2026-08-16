@@ -16,7 +16,7 @@
         :rubberSize="rubberSize"
         :shapeSize="shapeSize"
         :shapeType="shapeType"
-        @end="hanldeWritingEnd()"
+        @end="handleWritingEnd()"
       />
     </div>
 
@@ -37,16 +37,16 @@
               </div>
             </template>
             <div class="btn" :class="{ 'active': writingBoardModel === 'pen' }" v-tooltip="'画笔'" @click="changeModel('pen')">
-              <IconWrite class="icon" />
+              <i-icon-park-outline:write class="icon" />
             </div>
           </Popover>
           <Popover placement="top" trigger="manual" :value="sizePopoverType === 'shape'" @hide="sizePopoverType = ''">
             <template #content>
               <div class="setting shape">
                 <div class="shapes">
-                  <IconSquare class="icon" :class="{ 'active': shapeType === 'rect' }" @click="shapeType = 'rect'" />
-                  <IconRound class="icon" :class="{ 'active': shapeType === 'circle' }" @click="shapeType = 'circle'" />
-                  <IconArrowRight class="icon" :class="{ 'active': shapeType === 'arrow' }" @click="shapeType = 'arrow'" />
+                  <i-icon-park-outline:square class="icon" :class="{ 'active': shapeType === 'rect' }" @click="shapeType = 'rect'" />
+                  <i-icon-park-outline:round class="icon" :class="{ 'active': shapeType === 'circle' }" @click="shapeType = 'circle'" />
+                  <i-icon-park-outline:arrow-right class="icon" :class="{ 'active': shapeType === 'arrow' }" @click="shapeType = 'arrow'" />
                 </div>
                 <Divider type="vertical" />
                 <div class="label">墨迹粗细：</div>
@@ -54,7 +54,7 @@
               </div>
             </template>
             <div class="btn" :class="{ 'active': writingBoardModel === 'shape' }" v-tooltip="'形状'" @click="changeModel('shape')">
-              <IconGraphicDesign class="icon" />
+              <i-icon-park-outline:graphic-design class="icon" />
             </div>
           </Popover>
           <Popover placement="top" trigger="manual" :value="sizePopoverType === 'mark'" @hide="sizePopoverType = ''">
@@ -65,7 +65,7 @@
               </div>
             </template>
             <div class="btn" :class="{ 'active': writingBoardModel === 'mark' }" v-tooltip="'荧光笔'" @click="changeModel('mark')">
-              <IconHighLight class="icon" />
+              <i-icon-park-outline:high-light class="icon" />
             </div>
           </Popover>
           <Popover placement="top" trigger="manual" :value="sizePopoverType === 'eraser'" @hide="sizePopoverType = ''">
@@ -76,14 +76,14 @@
               </div>
             </template>
             <div class="btn" :class="{ 'active': writingBoardModel === 'eraser' }" v-tooltip="'橡皮擦'" @click="changeModel('eraser')">
-              <IconErase class="icon" />
+              <i-icon-park-outline:erase class="icon" />
             </div>
           </Popover>
           <div class="btn" v-tooltip="'清除墨迹'" @click="clearCanvas()">
-            <IconClear class="icon" />
+            <i-icon-park-outline:clear class="icon" />
           </div>
           <div class="btn" :class="{ 'active': blackboard }" v-tooltip="'黑板'" @click="blackboard = !blackboard">
-            <IconFill class="icon" />
+            <i-icon-park-outline:fill class="icon" />
           </div>
           <div class="colors">
             <div 
@@ -97,7 +97,7 @@
           </div>
         </div>
         <div class="btn close" v-tooltip="'关闭画笔'" @click="closeWritingBoard()">
-          <IconClose class="icon" />
+          <i-icon-park-outline:close class="icon" />
         </div>
       </div>
     </MoveablePanel>
@@ -105,7 +105,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, watch, useTemplateRef } from 'vue'
+import { onUnmounted, ref, watch, useTemplateRef } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useSlidesStore } from '@/store'
 import { db } from '@/utils/database'
@@ -115,6 +115,8 @@ import MoveablePanel from '@/components/MoveablePanel.vue'
 import Slider from '@/components/Slider.vue'
 import Popover from '@/components/Popover.vue'
 import Divider from '@/components//Divider.vue'
+
+const AUDIENCE_SYNC_CHANNEL = 'pptist-audience-sync'
 
 const writingBoardColors = ['#000000', '#ffffff', '#1e497b', '#4e81bb', '#e2534d', '#9aba60', '#8165a0', '#47acc5', '#f9974c', '#ffff3a']
 
@@ -156,6 +158,7 @@ const changeModel = (model: WritingBoardModel) => {
 // 清除画布上的墨迹
 const clearCanvas = () => {
   writingBoardRef.value!.clearCanvas()
+  broadcastWritingBoard('')
 }
 
 // 修改画笔颜色，如果当前处于橡皮状态则先切换到画笔状态
@@ -164,8 +167,28 @@ const changeColor = (color: string) => {
   writingBoardColor.value = color
 }
 
+// 观众视图同步频道
+const syncChannel = new BroadcastChannel(AUDIENCE_SYNC_CHANNEL)
+
+const broadcastWritingBoard = (dataURL: string) => {
+  syncChannel.postMessage({ type: 'WRITING_BOARD_UPDATE', dataURL, blackboard: blackboard.value })
+}
+
+syncChannel.onmessage = ({ data }) => {
+  if (data.type === 'REQUEST_WRITING_BOARD') {
+    const dataURL = writingBoardRef.value?.getImageDataURL() || ''
+    broadcastWritingBoard(dataURL)
+  }
+}
+
+onUnmounted(() => {
+  syncChannel.postMessage({ type: 'WRITING_BOARD_CLOSE' })
+  syncChannel.close()
+})
+
 // 关闭写字板
 const closeWritingBoard = () => {
+  syncChannel.postMessage({ type: 'WRITING_BOARD_CLOSE' })
   emit('close')
 }
 
@@ -173,14 +196,24 @@ const closeWritingBoard = () => {
 watch(currentSlide, () => {
   db.writingBoardImgs.where('id').equals(currentSlide.value.id).toArray().then(ret => {
     const currentImg = ret[0]
-    writingBoardRef.value!.setImageDataURL(currentImg?.dataURL || '')
+    const dataURL = currentImg?.dataURL || ''
+    writingBoardRef.value!.setImageDataURL(dataURL)
+    broadcastWritingBoard(dataURL)
   })
 }, { immediate: true })
 
+// 黑板模式切换时同步
+watch(blackboard, () => {
+  const dataURL = writingBoardRef.value?.getImageDataURL() || ''
+  broadcastWritingBoard(dataURL)
+})
+
 // 每次绘制完成后将绘制完的图片更新到数据库
-const hanldeWritingEnd = () => {
+const handleWritingEnd = () => {
   const dataURL = writingBoardRef.value!.getImageDataURL()
   if (!dataURL) return
+
+  broadcastWritingBoard(dataURL)
 
   db.writingBoardImgs.where('id').equals(currentSlide.value.id).toArray().then(ret => {
     const currentImg = ret[0]

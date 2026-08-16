@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { createVNode, render, computed, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { saveAs } from 'file-saver'
 import pptxgen from 'pptxgenjs'
@@ -12,6 +12,9 @@ import { type SvgPoints, toPoints } from '@/utils/svgPathParser'
 import { encrypt } from '@/utils/crypto'
 import { svg2Base64 } from '@/utils/svg2Base64'
 import message from '@/utils/message'
+
+import BaseLatexElement from '@/views/components/element/LatexElement/BaseLatexElement.vue'
+import BaseShapeElement from '@/views/components/element/ShapeElement/BaseShapeElement.vue'
 
 interface ExportImageConfig {
   quality: number
@@ -33,6 +36,20 @@ export default () => {
   })
 
   const exporting = ref(false)
+
+  const setPPTXLayout = (pptx: pptxgen) => {
+    if (viewportRatio.value === 0.625) pptx.layout = 'LAYOUT_16x10'
+    else if (viewportRatio.value === 0.75) pptx.layout = 'LAYOUT_4x3'
+    else {
+      const layoutName = 'PPTIST_CUSTOM_LAYOUT'
+      pptx.defineLayout({
+        name: layoutName,
+        width: viewportSize.value / ratioPx2Inch.value,
+        height: viewportSize.value * viewportRatio.value / ratioPx2Inch.value,
+      })
+      pptx.layout = layoutName
+    }
+  }
 
   // 导出图片
   const exportImage = (domRef: HTMLElement, format: string, quality: number, ignoreWebfont = true) => {
@@ -66,6 +83,7 @@ export default () => {
     
     setTimeout(() => {
       const pptx = new pptxgen()
+      setPPTXLayout(pptx)
 
       const config: ExportImageConfig = {
         quality: 1,
@@ -168,12 +186,34 @@ export default () => {
         const styleObj = { ...baseStyleObj }
         const styleAttr = 'attributes' in item ? item.attributes.find(attr => attr.key === 'style') : null
         if (styleAttr && styleAttr.value) {
+          let hasGradient = false
           const styleArr = styleAttr.value.split(';')
           for (const styleItem of styleArr) {
             const match = styleItem.match(/([^:]+):\s*(.+)/)
             if (match) {
               const [key, value] = [match[1].trim(), match[2].trim()]
-              if (key && value) styleObj[key] = value
+              if (key && value) {
+                if (key === 'background' && value.includes('linear-gradient')) {
+                  hasGradient = true
+                  const colorMatches = value.match(/#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}|rgba?\([^)]+\)/g)
+                  if (colorMatches && colorMatches.length > 0) {
+                    const colors = colorMatches.map(c => tinycolor(c))
+                    const avgColor = colors.reduce((acc, c) => {
+                      const rgb = c.toRgb()
+                      return {
+                        r: acc.r + rgb.r / colors.length,
+                        g: acc.g + rgb.g / colors.length,
+                        b: acc.b + rgb.b / colors.length,
+                      }
+                    }, { r: 0, g: 0, b: 0 })
+                    styleObj['color'] = tinycolor(avgColor).toHexString()
+                  }
+                }
+                else if (hasGradient && (key === 'background-clip' || key === '-webkit-background-clip' || (key === 'color' && value === 'transparent'))) {
+                  continue
+                }
+                else styleObj[key] = value
+              }
             }
           }
         }
@@ -444,18 +484,7 @@ export default () => {
   const exportPPTX = (_slides: Slide[], masterOverwrite: boolean, ignoreMedia: boolean) => {
     exporting.value = true
     const pptx = new pptxgen()
-
-    if (viewportRatio.value === 0.625) pptx.layout = 'LAYOUT_16x10'
-    else if (viewportRatio.value === 0.75) pptx.layout = 'LAYOUT_4x3'
-    else if (viewportRatio.value === 0.70710678) {
-      pptx.defineLayout({ name: 'A3', width: 10, height: 7.0710678 })
-      pptx.layout = 'A3'
-    }
-    else if (viewportRatio.value === 1.41421356) {
-      pptx.defineLayout({ name: 'A3_V', width: 10, height: 14.1421356 })
-      pptx.layout = 'A3_V'
-    }
-    else pptx.layout = 'LAYOUT_16x9'
+    setPPTXLayout(pptx)
 
     if (masterOverwrite) {
       const { color: bgColor, alpha: bgAlpha } = formatColor(theme.value.backgroundColor)
@@ -516,6 +545,7 @@ export default () => {
       for (const el of slide.elements) {
         if (el.type === 'text') {
           const textProps = formatHTML(el.content)
+          const inset = el.inset || [10, 10, 10, 10]
 
           const options: pptxgen.TextPropsOptions = {
             x: el.left / ratioPx2Inch.value,
@@ -525,11 +555,10 @@ export default () => {
             fontSize: defaultFontSize / ratioPx2Pt.value,
             fontFace: '微软雅黑',
             color: '#000000',
-            valign: 'top',
-            margin: 10 / ratioPx2Pt.value,
+            valign: el.vAlign || 'top',
+            margin: [inset[3], inset[1], inset[2], inset[0]].map(item => item / ratioPx2Pt.value) as [number, number, number, number],
             paraSpaceBefore: 5 / ratioPx2Pt.value,
             lineSpacingMultiple: 1.5 / 1.25,
-            autoFit: true,
           }
           if (el.rotate) options.rotate = el.rotate
           if (el.wordSpace) options.charSpacing = el.wordSpace / ratioPx2Pt.value
@@ -546,6 +575,7 @@ export default () => {
           if (el.opacity !== undefined) options.transparency = (1 - el.opacity) * 100
           if (el.paragraphSpace !== undefined) options.paraSpaceBefore = el.paragraphSpace / ratioPx2Pt.value
           if (el.vertical) options.vert = 'eaVert'
+          if (!el.fixedHeight) options.fit = 'resize'
 
           pptxSlide.addText(textProps, options)
         }
@@ -595,9 +625,14 @@ export default () => {
 
         else if (el.type === 'shape') {
           if (el.special) {
-            const svgRef = document.querySelector(`.thumbnail-list .base-element-${el.id} svg`) as HTMLElement
-            if (svgRef.clientWidth < 1 || svgRef.clientHeight < 1) continue // 临时处理（导入PPTX文件带来的异常数据）
-            const base64SVG = svg2Base64(svgRef)
+            const container = document.createElement('div')
+            const vm = createVNode(BaseShapeElement, { elementInfo: el }, null)
+            render(vm, container)
+            const svgRef = container.querySelector('svg')
+            const base64SVG = svgRef ? svg2Base64(svgRef) : ''
+            render(null, container)
+
+            if (!base64SVG) continue
 
             const options: pptxgen.ImageProps = {
               data: base64SVG,
@@ -656,6 +691,7 @@ export default () => {
           }
           if (el.text) {
             const textProps = formatHTML(el.text.content)
+            const inset = el.text.inset || [10, 10, 10, 10]
 
             const options: pptxgen.TextPropsOptions = {
               x: el.left / ratioPx2Inch.value,
@@ -666,6 +702,7 @@ export default () => {
               fontFace: '微软雅黑',
               color: '#000000',
               paraSpaceBefore: 5 / ratioPx2Pt.value,
+              margin: [inset[3], inset[1], inset[2], inset[0]].map(item => item / ratioPx2Pt.value) as [number, number, number, number],
               valign: el.text.align,
             }
             if (el.rotate) options.rotate = el.rotate
@@ -905,8 +942,14 @@ export default () => {
         }
         
         else if (el.type === 'latex') {
-          const svgRef = document.querySelector(`.thumbnail-list .base-element-${el.id} svg`) as HTMLElement
-          const base64SVG = svg2Base64(svgRef)
+          const container = document.createElement('div')
+          const vm = createVNode(BaseLatexElement, { elementInfo: el }, null)
+          render(vm, container)
+          const svgRef = container.querySelector('svg')
+          const base64SVG = svgRef ? svg2Base64(svgRef) : ''
+          render(null, container)
+
+          if (!base64SVG) continue
 
           const options: pptxgen.ImageProps = {
             data: base64SVG,

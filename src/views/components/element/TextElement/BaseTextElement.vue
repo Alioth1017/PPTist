@@ -15,8 +15,8 @@
       <div 
         class="element-content"
         :style="{
-          width: elementInfo.vertical ? 'auto' : elementInfo.width + 'px',
-          height: elementInfo.vertical ? elementInfo.height + 'px' : 'auto',
+          width: elementInfo.vertical && !elementInfo.fixedHeight ? 'auto' : elementInfo.width + 'px',
+          height: !elementInfo.vertical && !elementInfo.fixedHeight ? 'auto' : elementInfo.height + 'px',
           backgroundColor: elementInfo.fill,
           opacity: elementInfo.opacity,
           textShadow: shadowStyle,
@@ -25,6 +25,10 @@
           color: elementInfo.defaultColor,
           fontFamily: elementInfo.defaultFontName,
           writingMode: elementInfo.vertical ? 'vertical-rl' : 'horizontal-tb',
+          padding: `${inset[0]}px ${inset[1]}px ${inset[2]}px ${inset[3]}px`,
+          display: elementInfo.fixedHeight ? 'flex' : undefined,
+          flexDirection: elementInfo.fixedHeight ? 'column' : undefined,
+          justifyContent: fixedContentJustify,
           '--paragraphSpace': `${elementInfo.paragraphSpace === undefined ? 5 : elementInfo.paragraphSpace}px`,
         }"
       >
@@ -44,7 +48,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed } from 'vue'
+import { computed, type CSSProperties } from 'vue'
 import type { PPTTextElement } from '@/types/slides'
 import ElementOutline from '@/views/components/element/ElementOutline.vue'
 
@@ -57,6 +61,17 @@ const props = defineProps<{
 
 const shadow = computed(() => props.elementInfo.shadow)
 const { shadowStyle } = useElementShadow(shadow)
+const inset = computed(() => props.elementInfo.inset || [10, 10, 10, 10])
+const fixedContentJustify = computed<CSSProperties['justifyContent']>(() => {
+  if (!props.elementInfo.fixedHeight) return undefined
+
+  const vAlignMap: Record<NonNullable<PPTTextElement['vAlign']>, CSSProperties['justifyContent']> = {
+    top: 'flex-start',
+    middle: 'center',
+    bottom: 'flex-end',
+  }
+  return vAlignMap[props.elementInfo.vAlign || 'top']
+})
 </script>
 
 <style lang="scss" scoped>
@@ -69,7 +84,6 @@ const { shadowStyle } = useElementShadow(shadow)
 }
 .element-content {
   position: relative;
-  padding: 10px;
   line-height: 1.5;
   word-break: break-word;
   font-family: $textElementFont;

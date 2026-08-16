@@ -52,7 +52,7 @@
       <FileInput @change="files => uploadBackgroundImage(files)">
         <div class="background-image">
           <div class="content" :style="{ backgroundImage: `url(${background.image?.src})` }">
-            <IconPlus />
+            <i-icon-park-outline:plus />
           </div>
         </div>
       </FileInput>
@@ -93,7 +93,7 @@
     </div>
 
     <div class="row">
-      <Button style="flex: 1;" @click="applyBackgroundAllSlide()"><IconCheck /> 应用背景到全部</Button>
+      <Button style="flex: 1;" @click="applyBackgroundAllSlide()"><i-icon-park-outline:check /> 应用背景到全部</Button>
     </div>
 
     <Divider />
@@ -101,14 +101,16 @@
     <div class="row">
       <Select 
         style="width: 100%;" 
+        defaultLabel="自定义"
         :value="viewportRatio" 
-        @update:value="value => updateViewportRatio(value as number)"
+        @update:value="value => updateViewportRatio(value)"
         :options="[
           { label: '宽屏 16 : 9', value: 0.5625 },
           { label: '宽屏 16 : 10', value: 0.625 },
           { label: '标准 4 : 3', value: 0.75 },
           { label: '纸张 A3 / A4', value: 0.70710678 },
           { label: '竖向 A3 / A4', value: 1.41421356 },
+          { label: '自定义', value: 'custom' },
         ]"
       />
     </div>
@@ -123,8 +125,8 @@
       <span>全局主题</span>
       <span class="more" @click="moreThemeConfigsVisible = !moreThemeConfigsVisible">
         <span class="text">更多</span>
-        <IconDown v-if="moreThemeConfigsVisible" />
-        <IconRight v-else />
+        <i-icon-park-outline:down v-if="moreThemeConfigsVisible" />
+        <i-icon-park-outline:right v-else />
       </span>
     </div>
     <div class="row">
@@ -206,8 +208,8 @@
         <div style="width: 40%;">水平阴影：</div>
         <Slider 
           style="width: 60%;"
-          :min="-10" 
-          :max="10" 
+          :min="-20" 
+          :max="20" 
           :step="1" 
           :value="theme.shadow.h" 
           @update:value="value => updateTheme({ shadow: { ...theme.shadow, h: value as number } })"
@@ -217,8 +219,8 @@
         <div style="width: 40%;">垂直阴影：</div>
         <Slider
           style="width: 60%;"
-          :min="-10"
-          :max="10"
+          :min="-20"
+          :max="20"
           :step="1"
           :value="theme.shadow.v"
           @update:value="value => updateTheme({ shadow: { ...theme.shadow, v: value as number } })"
@@ -229,7 +231,7 @@
         <Slider
           style="width: 60%;"
           :min="1"
-          :max="20"
+          :max="30"
           :step="1"
           :value="theme.shadow.blur"
           @update:value="value => updateTheme({ shadow: { ...theme.shadow, blur: value as number } })"
@@ -250,15 +252,15 @@
     </template>
 
     <div class="row">
-      <Button style="flex: 1;" @click="applyThemeToAllSlides(moreThemeConfigsVisible)"><IconCheck /> 应用主题到全部</Button>
+      <Button style="flex: 1;" @click="applyThemeToAllSlides(moreThemeConfigsVisible)"><i-icon-park-outline:check /> 应用主题到全部</Button>
     </div>
 
     <div class="row">
-      <Button style="flex: 1;" @click="applyFontToAllSlides(theme.fontName)"><IconCheck /> 全局统一字体</Button>
+      <Button style="flex: 1;" @click="applyFontToAllSlides(theme.fontName)"><i-icon-park-outline:check /> 全局统一字体</Button>
     </div>
 
     <div class="row">
-      <Button style="flex: 1;" @click="themeStylesExtractVisible = true"><IconPlatte /> 从幻灯片提取主题</Button>
+      <Button style="flex: 1;" @click="themeStylesExtractVisible = true"><i-icon-park-outline:platte /> 从幻灯片提取主题</Button>
     </div>
 
     <Divider />
@@ -304,6 +306,14 @@
   >
     <ThemeColorsSetting @close="themeColorsSettingVisible = false" />
   </Modal>
+
+  <Modal
+    v-model:visible="customViewportSizeVisible" 
+    :width="300"
+    @closed="customViewportSizeVisible = false"
+  >
+    <ViewportSizeSetting @close="customViewportSizeVisible = false" />
+  </Modal>
 </template>
 
 <script lang="ts" setup>
@@ -325,9 +335,11 @@ import { FONTS } from '@/configs/font'
 import useHistorySnapshot from '@/hooks/useHistorySnapshot'
 import useSlideTheme from '@/hooks/useSlideTheme'
 import { getImageDataURL } from '@/utils/image'
+import { toFixed } from '@/utils/common'
 
 import ThemeStylesExtract from './ThemeStylesExtract.vue'
 import ThemeColorsSetting from './ThemeColorsSetting.vue'
+import ViewportSizeSetting from './ViewportSizeSetting.vue'
 import SVGLine from '../common/SVGLine.vue'
 import ColorButton from '@/components/ColorButton.vue'
 import ColorListButton from '@/components/ColorListButton.vue'
@@ -349,6 +361,7 @@ const { slides, currentSlide, slideIndex, viewportRatio, viewportSize, theme } =
 const moreThemeConfigsVisible = ref(false)
 const themeStylesExtractVisible = ref(false)
 const themeColorsSettingVisible = ref(false)
+const customViewportSizeVisible = ref(false)
 const currentGradientIndex = ref(0)
 const lineStyleOptions = ref<LineStyleType[]>(['solid', 'dashed', 'dotted'])
 
@@ -461,15 +474,13 @@ const updateTheme = (themeProps: Partial<SlideTheme>) => {
 }
 
 // 设置画布尺寸（宽高比例）
-const updateViewportRatio = (value: number) => {
+const updateViewportRatio = (value: string | number) => {
+  if (value === 'custom') {
+    customViewportSizeVisible.value = true
+    return
+  }
+  if (typeof value !== 'number') return
   slidesStore.setViewportRatio(value)
-}
-
-const toFixed = (num: number) => {
-  if (num % 1 !== 0) {
-    return parseFloat(num.toFixed(1))
-  } 
-  return Math.floor(num)
 }
 </script>
 

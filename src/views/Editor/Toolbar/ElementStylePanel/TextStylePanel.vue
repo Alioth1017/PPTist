@@ -24,7 +24,7 @@
         }))"
       >
         <template #icon>
-          <IconRowHeight />
+          <i-icon-park-outline:row-height />
         </template>
       </Select>
     </div>
@@ -38,7 +38,7 @@
         }))"
       >
         <template #icon>
-          <IconVerticalSpacingBetweenItems />
+          <i-icon-park-outline:vertical-spacing-between-items />
         </template>
       </Select>
     </div>
@@ -52,7 +52,7 @@
         }))"
       >
         <template #icon>
-          <IconFullwidth />
+          <i-icon-park-outline:fullwidth />
         </template>
       </Select>
     </div>
@@ -70,6 +70,72 @@
     </div>
 
     <Divider />
+
+    <div class="row">
+      <NumberInput
+        :min="0"
+        :max="50"
+        :value="inset[0]"
+        @update:value="value => updateInset(0, value)"
+        style="width: 45%;"
+      >
+        <template #prefix>上边距：</template>
+      </NumberInput>
+      <div style="width: 10%;"></div>
+      <NumberInput
+        :min="0"
+        :max="50"
+        :value="inset[2]"
+        @update:value="value => updateInset(2, value)"
+        style="width: 45%;"
+      >
+        <template #prefix>下边距：</template>
+      </NumberInput>
+    </div>
+    <div class="row">
+      <NumberInput
+        :min="0"
+        :max="50"
+        :value="inset[3]"
+        @update:value="value => updateInset(3, value)"
+        style="width: 45%;"
+      >
+        <template #prefix>左边距：</template>
+      </NumberInput>
+      <div style="width: 10%;"></div>
+      <NumberInput
+        :min="0"
+        :max="50"
+        :value="inset[1]"
+        @update:value="value => updateInset(1, value)"
+        style="width: 45%;"
+      >
+        <template #prefix>右边距：</template>
+      </NumberInput>
+    </div>
+
+    <Divider />
+    <div class="row">
+      <div style="width: 40%;">固定高度：</div>
+      <div class="switch-wrapper" style="width: 60%;">
+        <Switch
+          :value="fixedHeight"
+          @update:value="value => updateFixedHeight(value)"
+        />
+      </div>
+    </div>
+    <RadioGroup
+      class="row"
+      button-style="solid"
+      :value="vAlign"
+      @update:value="value => updateText({ vAlign: value as TextAlignVertical })"
+      v-if="fixedHeight"
+    >
+      <RadioButton value="top" v-tooltip="'顶对齐'" style="flex: 1;"><i-icon-park-outline:align-text-top-one /></RadioButton>
+      <RadioButton value="middle" v-tooltip="'垂直居中'" style="flex: 1;"><i-icon-park-outline:align-text-middle-one /></RadioButton>
+      <RadioButton value="bottom" v-tooltip="'底对齐'" style="flex: 1;"><i-icon-park-outline:align-text-bottom-one /></RadioButton>
+    </RadioGroup>
+    <Divider />
     <ElementOutline />
     <Divider />
     <ElementShadow />
@@ -82,7 +148,7 @@
 import { ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMainStore, useSlidesStore } from '@/store'
-import type { PPTTextElement } from '@/types/slides'
+import type { PPTTextElement, TextAlignVertical, TextInset } from '@/types/slides'
 import emitter, { EmitterEvents, type RichTextAction } from '@/utils/emitter'
 import useHistorySnapshot from '@/hooks/useHistorySnapshot'
 
@@ -93,7 +159,11 @@ import RichTextBase from '../common/RichTextBase.vue'
 import ColorButton from '@/components/ColorButton.vue'
 import ColorPicker from '@/components/ColorPicker/index.vue'
 import Divider from '@/components/Divider.vue'
+import NumberInput from '@/components/NumberInput.vue'
+import RadioButton from '@/components/RadioButton.vue'
+import RadioGroup from '@/components/RadioGroup.vue'
 import Select from '@/components/Select.vue'
+import Switch from '@/components/Switch.vue'
 import Popover from '@/components/Popover.vue'
 
 // 注意，存在一个未知原因的BUG，如果文本加粗后文本框高度增加，画布的可视区域定位会出现错误
@@ -186,6 +256,9 @@ const fill = ref<string>('#000')
 const lineHeight = ref<number>()
 const wordSpace = ref<number>()
 const paragraphSpace = ref<number>()
+const inset = ref<TextInset>([10, 10, 10, 10])
+const fixedHeight = ref(false)
+const vAlign = ref<TextAlignVertical>('top')
 
 watch(handleElement, () => {
   if (!handleElement.value || handleElement.value.type !== 'text') return
@@ -194,6 +267,9 @@ watch(handleElement, () => {
   lineHeight.value = handleElement.value.lineHeight || 1.5
   wordSpace.value = handleElement.value.wordSpace || 0
   paragraphSpace.value = handleElement.value.paragraphSpace === undefined ? 5 : handleElement.value.paragraphSpace
+  inset.value = handleElement.value.inset || [10, 10, 10, 10]
+  fixedHeight.value = !!handleElement.value.fixedHeight
+  vAlign.value = handleElement.value.vAlign || 'top'
   emitter.emit(EmitterEvents.SYNC_RICH_TEXT_ATTRS_TO_STORE)
 }, { deep: true, immediate: true })
 
@@ -204,6 +280,20 @@ const paragraphSpaceOptions = [0, 5, 10, 15, 20, 25, 30, 40, 50, 80]
 // 发送富文本设置命令（批量）
 const emitBatchRichTextCommand = (action: RichTextAction[]) => {
   emitter.emit(EmitterEvents.RICH_TEXT_COMMAND, { action })
+}
+
+const updateInset = (index: number, value: number) => {
+  const _inset: TextInset = [...inset.value]
+  _inset[index] = value
+  updateText({ inset: _inset })
+}
+
+const updateFixedHeight = (fixed: boolean) => {
+  if (fixed) updateText({ fixedHeight: true, vAlign: vAlign.value || 'top' })
+  else {
+    slidesStore.removeElementProps({ id: handleElementId.value, propName: ['fixedHeight', 'vAlign'] })
+    addHistorySnapshot()
+  }
 }
 </script>
 
@@ -216,6 +306,9 @@ const emitBatchRichTextCommand = (action: RichTextAction[]) => {
   display: flex;
   align-items: center;
   margin-bottom: 10px;
+}
+.switch-wrapper {
+  text-align: right;
 }
 .preset-style {
   display: flex;

@@ -17,7 +17,7 @@
       >
         <template #suffix>
           <span class="count">{{ keyword.length }} / 50</span>
-          <div class="submit" type="primary" @click="createOutline()"><IconSend class="icon" /> AI 生成</div>
+          <div class="submit" type="primary" @click="createOutline()"><i-icon-park-outline:send class="icon" /> AI 生成</div>
         </template>
       </Input>
       <div class="recommends">
@@ -59,8 +59,9 @@
             style="width: 190px;"
             v-model:value="model"
             :options="[
-              { label: 'GLM-4.7-Flash', value: 'glm-4.7-flash' },
-              { label: 'Doubao-Seed-1.6-Flash', value: 'doubao-seed-1.6-flash' },
+              { label: 'Qwen3.7-Flash', value: 'qwen:qwen3.7-flash' },
+              { label: 'Doubao-Seed-2.0-mini', value: 'doubao:doubao-seed-2.0-mini' },
+              { label: 'DeepSeek-v4-Flash', value: 'qwen:deepseek-v4-flash-0731' },
             ]"
           />
         </div>
@@ -152,7 +153,7 @@ const loading = ref(false)
 const outlineCreating = ref(false)
 const overwrite = ref(true)
 const step = ref<'setup' | 'outline' | 'template'>('setup')
-const model = ref('glm-4.7-flash')
+const model = ref('qwen:qwen3.7-flash')
 const outlineRef = useTemplateRef<HTMLElement>('outlineRef')
 const inputRef = useTemplateRef<InstanceType<typeof Input>>('inputRef')
 
@@ -185,11 +186,14 @@ const createOutline = async () => {
 
   loading.value = true
   outlineCreating.value = true
+
+  const [provider, _model] = model.value.split(':')
   
   const stream = await api.AIPPT_Outline({
     content: keyword.value,
     language: language.value,
-    model: model.value,
+    provider,
+    model: _model,
   })
   if (typeof stream === 'object' && stream.state === -1) {
     loading.value = false
@@ -231,17 +235,20 @@ const createPPT = async (template?: { slides: Slide[], theme: SlideTheme }) => {
 
   if (overwrite.value) resetSlides()
 
+  const [provider, _model] = model.value.split(':')
+
   const stream = await api.AIPPT({
     content: outline.value,
     language: language.value,
     style: style.value,
-    model: model.value,
+    provider,
+    model: _model,
   })
   if (typeof stream === 'object' && stream.state === -1) {
     loading.value = false
     message.closeAll()
     mainStore.setAIPPTDialogState(true)
-    return message.error('该模型API的并发数过高，请更换其他模型重试')
+    return message.error('该模型不可用，请更换其他模型重试')
   }
 
   if (img.value === 'test') {

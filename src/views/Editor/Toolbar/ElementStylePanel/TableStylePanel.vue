@@ -11,7 +11,7 @@
         :options="FONTS"
       >
         <template #icon>
-          <IconFontSize />
+          <i-icon-park-outline:font-size />
         </template>
       </Select>
       <Select
@@ -26,7 +26,7 @@
         }))"
       >
         <template #icon>
-          <IconAddText />
+          <i-icon-park-outline:add-text />
         </template>
       </Select>
     </SelectGroup>
@@ -40,7 +40,7 @@
           />
         </template>
         <TextColorButton first v-tooltip="'文字颜色'" :color="textAttrs.color">
-          <IconText />
+          <i-icon-park-outline:text />
         </TextColorButton>
       </Popover>
       <Popover trigger="click" style="width: 50%;">
@@ -51,7 +51,7 @@
           />
         </template>
         <TextColorButton last v-tooltip="'单元格填充'" :color="textAttrs.backcolor">
-          <IconFill />
+          <i-icon-park-outline:fill />
         </TextColorButton>
       </Popover>
     </ButtonGroup>
@@ -62,25 +62,25 @@
         :checked="textAttrs.bold"
         v-tooltip="'加粗'"
         @click="updateTextAttrs({ bold: !textAttrs.bold })"
-      ><IconTextBold /></CheckboxButton>
+      ><i-icon-park-outline:text-bold /></CheckboxButton>
       <CheckboxButton 
         style="flex: 1;"
         :checked="textAttrs.em"
         v-tooltip="'斜体'"
         @click="updateTextAttrs({ em: !textAttrs.em })"
-      ><IconTextItalic /></CheckboxButton>
+      ><i-icon-park-outline:text-italic /></CheckboxButton>
       <CheckboxButton 
         style="flex: 1;"
         :checked="textAttrs.underline"
         v-tooltip="'下划线'"
         @click="updateTextAttrs({ underline: !textAttrs.underline })"
-      ><IconTextUnderline /></CheckboxButton>
+      ><i-icon-park-outline:text-underline /></CheckboxButton>
       <CheckboxButton 
         style="flex: 1;"
         :checked="textAttrs.strikethrough"
         v-tooltip="'删除线'"
         @click="updateTextAttrs({ strikethrough: !textAttrs.strikethrough })"
-      ><IconStrikethrough /></CheckboxButton>
+      ><i-icon-park-outline:strikethrough /></CheckboxButton>
     </ButtonGroup>
 
     <RadioGroup 
@@ -89,10 +89,21 @@
       :value="textAttrs.align"
       @update:value="value => updateTextAttrs({ align: value as TextAlign })"
     >
-      <RadioButton value="left" v-tooltip="'左对齐'" style="flex: 1;"><IconAlignTextLeft /></RadioButton>
-      <RadioButton value="center" v-tooltip="'居中'" style="flex: 1;"><IconAlignTextCenter /></RadioButton>
-      <RadioButton value="right" v-tooltip="'右对齐'" style="flex: 1;"><IconAlignTextRight /></RadioButton>
-      <RadioButton value="justify" v-tooltip="'两端对齐'" style="flex: 1;"><IconAlignTextBoth /></RadioButton>
+      <RadioButton value="left" v-tooltip="'左对齐'" style="flex: 1;"><i-icon-park-outline:align-text-left /></RadioButton>
+      <RadioButton value="center" v-tooltip="'居中'" style="flex: 1;"><i-icon-park-outline:align-text-center /></RadioButton>
+      <RadioButton value="right" v-tooltip="'右对齐'" style="flex: 1;"><i-icon-park-outline:align-text-right /></RadioButton>
+      <RadioButton value="justify" v-tooltip="'两端对齐'" style="flex: 1;"><i-icon-park-outline:align-text-both /></RadioButton>
+    </RadioGroup>
+
+    <RadioGroup 
+      class="row" 
+      button-style="solid" 
+      :value="textAttrs.vAlign"
+      @update:value="value => updateTextAttrs({ vAlign: value as TextAlignVertical })"
+    >
+      <RadioButton value="top" v-tooltip="'顶对齐'" style="flex: 1;"><i-icon-park-outline:align-text-top-one /></RadioButton>
+      <RadioButton value="middle" v-tooltip="'垂直居中'" style="flex: 1;"><i-icon-park-outline:align-text-middle-one /></RadioButton>
+      <RadioButton value="bottom" v-tooltip="'底对齐'" style="flex: 1;"><i-icon-park-outline:align-text-bottom-one /></RadioButton>
     </RadioGroup>
 
     <Divider />
@@ -102,20 +113,32 @@
     <Divider />
 
     <div class="row">
-      <div style="width: 40%;">行数：</div>
-      <div class="set-count" style="width: 60%;">
-        <Button class="btn" :disabled="rowCount <= 1" @click="setTableRow(rowCount - 1)"><IconMinus /></Button>
-        <div class="count-text">{{rowCount}}</div>
-        <Button class="btn" :disabled="rowCount >= 30" @click="setTableRow(rowCount + 1)"><IconPlus /></Button>
-      </div>
+      <div style="width: 40%;">操作行：</div>
+      <ButtonGroup style="width: 60%;" passive>
+        <Button first style="flex: 1;" @click="emitTableCommand('insert-row', 'after')">添加行</Button>
+        <Popover trigger="click">
+          <template #content>
+            <PopoverMenuItem center @click="emitTableCommand('insert-row', 'before')">上方添加</PopoverMenuItem>
+            <PopoverMenuItem center @click="emitTableCommand('insert-row', 'after')">下方添加</PopoverMenuItem>
+            <PopoverMenuItem center @click="emitTableCommand('delete-row')">删除行</PopoverMenuItem>
+          </template>
+          <Button last class="popover-btn"><i-icon-park-outline:down /></Button>
+        </Popover>
+      </ButtonGroup>
     </div>
     <div class="row">
-      <div style="width: 40%;">列数：</div>
-      <div class="set-count" style="width: 60%;">
-        <Button class="btn" :disabled="colCount <= 1" @click="setTableCol(colCount - 1)"><IconMinus /></Button>
-        <div class="count-text">{{colCount}}</div>
-        <Button class="btn" :disabled="colCount >= 30" @click="setTableCol(colCount + 1)"><IconPlus /></Button>
-      </div>
+      <div style="width: 40%;">操作列：</div>
+      <ButtonGroup style="width: 60%;" passive>
+        <Button first style="flex: 1;" @click="emitTableCommand('insert-col', 'after')">添加列</Button>
+        <Popover trigger="click">
+          <template #content>
+            <PopoverMenuItem center @click="emitTableCommand('insert-col', 'before')">左侧添加</PopoverMenuItem>
+            <PopoverMenuItem center @click="emitTableCommand('insert-col', 'after')">右侧添加</PopoverMenuItem>
+            <PopoverMenuItem center @click="emitTableCommand('delete-col')">删除列</PopoverMenuItem>
+          </template>
+          <Button last class="popover-btn"><i-icon-park-outline:down /></Button>
+        </Popover>
+      </ButtonGroup>
     </div>
 
     <Divider />
@@ -174,10 +197,10 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { nanoid } from 'nanoid'
 import { useMainStore, useSlidesStore } from '@/store'
-import type { PPTTableElement, TableCell, TableCellStyle, TableTheme, TextAlign } from '@/types/slides'
+import type { PPTTableElement, TableCell, TableCellStyle, TableTheme, TextAlign, TextAlignVertical } from '@/types/slides'
 import { FONTS } from '@/configs/font'
+import emitter, { EmitterEvents, type TableCommand } from '@/utils/emitter'
 import useHistorySnapshot from '@/hooks/useHistorySnapshot'
 
 import ElementOutline from '../common/ElementOutline.vue'
@@ -195,6 +218,7 @@ import RadioGroup from '@/components/RadioGroup.vue'
 import Select from '@/components/Select.vue'
 import SelectGroup from '@/components/SelectGroup.vue'
 import Popover from '@/components/Popover.vue'
+import PopoverMenuItem from '@/components/PopoverMenuItem.vue'
 
 const slidesStore = useSlidesStore()
 const { handleElement, handleElementId, selectedTableCells: selectedCells } = storeToRefs(useMainStore())
@@ -214,26 +238,17 @@ const textAttrs = ref({
   fontsize: '12px',
   fontname: '',
   align: 'left',
+  vAlign: 'top',
 })
 
 const theme = ref<TableTheme>()
 const hasTheme = ref(false)
-const rowCount = ref(0)
-const colCount = ref(0)
-const minRowCount = ref(0)
-const minColCount = ref(0)
 
 watch(handleElement, () => {
   if (!handleElement.value || handleElement.value.type !== 'table') return
   
   theme.value = handleElement.value.theme
   hasTheme.value = !!theme.value
-
-  rowCount.value = handleElement.value.data.length
-  colCount.value = handleElement.value.data[0].length
-
-  minRowCount.value = handleElement.value.data.length
-  minColCount.value = handleElement.value.data[0].length
 }, { deep: true, immediate: true })
 
 const { addHistorySnapshot } = useHistorySnapshot()
@@ -262,6 +277,7 @@ const updateTextAttrState = () => {
       fontsize: '12px',
       fontname: '',
       align: 'left',
+      vAlign: 'top',
     }
   }
   else {
@@ -275,12 +291,13 @@ const updateTextAttrState = () => {
       fontsize: style.fontsize || '12px',
       fontname: style.fontname || '',
       align: style.align || 'left',
+      vAlign: style.vAlign || 'top',
     }
   }
 }
 
 onMounted(() => {
-  if (selectedCells.value.length) updateTextAttrState()
+  updateTextAttrState()
 })
 
 watch(selectedCells, updateTextAttrState)
@@ -335,58 +352,12 @@ const toggleTheme = (checked: boolean) => {
   }
 }
 
-// 设置表格行数
-const setTableRow = (value: number) => {
-  const _handleElement = handleElement.value as PPTTableElement
-  const rowCount = _handleElement.data.length
-
-  if (value > rowCount) {
-    const rowCells: TableCell[] = new Array(colCount.value).fill({ id: nanoid(10), colspan: 1, rowspan: 1, text: '' })
-    const newTableCells: TableCell[][] = new Array(value - rowCount).fill(rowCells)
-  
-    const tableCells: TableCell[][] = JSON.parse(JSON.stringify(_handleElement.data))
-    tableCells.push(...newTableCells)
-  
-    updateElement({ data: tableCells })
-  }
-  else {
-    const tableCells: TableCell[][] = _handleElement.data.slice(0, value)
-    updateElement({ data: tableCells })
-  }
-}
-
-// 设置表格列数
-const setTableCol = (value: number) => {
-  const _handleElement = handleElement.value as PPTTableElement
-  const colCount = _handleElement.data[0].length
-
-  let tableCells = _handleElement.data
-  let colSizeList = _handleElement.colWidths.map(item => item * _handleElement.width)
-
-  if (value > colCount) {
-    tableCells = tableCells.map(item => {
-      const cells: TableCell[] = new Array(value - colCount).fill({ id: nanoid(10), colspan: 1, rowspan: 1, text: '' })
-      item.push(...cells)
-      return item
-    })
-  
-    const newColSizeList: number[] = new Array(value - colCount).fill(100)
-    colSizeList.push(...newColSizeList)
-  }
-  else {
-    tableCells = tableCells.map(item => item.slice(0, value))
-    colSizeList = colSizeList.slice(0, value)
-  }
-
-  const width = colSizeList.reduce((a, b) => a + b)
-  const colWidths = colSizeList.map(item => item / width)
-
-  const props = {
-    width,
-    data: tableCells,
-    colWidths,
-  }
-  updateElement(props)
+const emitTableCommand = (command: TableCommand['command'], position?: TableCommand['position']) => {
+  emitter.emit(EmitterEvents.TABLE_COMMAND, {
+    targetId: handleElementId.value,
+    command,
+    position,
+  })
 }
 </script>
 
@@ -403,19 +374,8 @@ const setTableCol = (value: number) => {
 .switch-wrapper {
   text-align: right;
 }
-.set-count {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-
-  .btn {
-    padding: 0 8px;
-  }
-
-  .count-text {
-    flex: 1;
-    text-align: center;
-    margin: 0 8px;
-  }
+.popover-btn {
+  width: 32px;
+  padding: 0 3px;
 }
 </style>

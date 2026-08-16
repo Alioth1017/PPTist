@@ -2,14 +2,17 @@ import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { parse, type Shape, type Element, type ChartItem, type BaseElement } from 'pptxtojson'
 import { nanoid } from 'nanoid'
+import tinycolor from 'tinycolor2'
 import { useSlidesStore } from '@/store'
 import { decrypt } from '@/utils/crypto'
+import { isFloatEqual } from '@/utils/common'
 import { type ShapePoolItem, SHAPE_LIST, SHAPE_PATH_FORMULAS } from '@/configs/shapes'
 import useAddSlidesOrElements from '@/hooks/useAddSlidesOrElements'
 import useSlideHandler from '@/hooks/useSlideHandler'
 import useHistorySnapshot from './useHistorySnapshot'
 import message from '@/utils/message'
-import { getSvgPathRange } from '@/utils/svgPathParser'
+import { getSvgPathRange, toPoints } from '@/utils/svgPathParser'
+import { loadGoogleFonts } from '@/utils/font'
 import type {
   Slide,
   TableCellStyle,
@@ -18,23 +21,193 @@ import type {
   SlideBackground,
   PPTShapeElement,
   PPTLineElement,
+  LinePoint,
   PPTImageElement,
-  ShapeTextAlign,
+  TextAlignVertical,
   PPTTextElement,
   ChartOptions,
   Gradient,
 } from '@/types/slides'
 
-const shapeVAlignMap: Record<string, ShapeTextAlign> = {
+const vAlignMap: Record<string, TextAlignVertical> = {
   'mid': 'middle',
   'down': 'bottom',
   'up': 'top',
 }
 
+const getAspectRatio = (width: number, height: number) => {
+  if (!width || !height) return 0.5625
+
+  let aspectRatio = height / width
+  if (isFloatEqual(aspectRatio, 0.625)) aspectRatio = 0.625
+  else if (isFloatEqual(aspectRatio, 0.75)) aspectRatio = 0.75
+  else if (isFloatEqual(aspectRatio, 0.5625)) aspectRatio = 0.5625
+
+  return aspectRatio
+}
+
+const getTextNodeStyleSpan = (textNode: Text, styleProp: 'fontSize' | 'color') => {
+  let parent = textNode.parentElement
+
+  while (parent) {
+    if (parent.tagName === 'SPAN' && parent.style[styleProp]) return parent
+    if (parent.tagName === 'LI') break
+    parent = parent.parentElement
+  }
+
+  return null
+}
+
+const getListItemStyleValue = (li: HTMLLIElement, styleProp: 'fontSize' | 'color') => {
+  const walker = document.createTreeWalker(li, NodeFilter.SHOW_TEXT)
+  let styleSpan: HTMLSpanElement | null = null
+  let hasTextContent = false
+
+  let currentNode = walker.nextNode()
+  while (currentNode) {
+    const textNode = currentNode as Text
+    const textContent = textNode.textContent?.replace(/\s+/g, '')
+
+    if (textContent) {
+      const parentLi = textNode.parentElement?.closest('li')
+      if (parentLi === li) {
+        hasTextContent = true
+
+        const currentStyleSpan = getTextNodeStyleSpan(textNode, styleProp)
+        if (!currentStyleSpan) return ''
+        if (!styleSpan) styleSpan = currentStyleSpan as HTMLSpanElement
+        else if (styleSpan !== currentStyleSpan) return ''
+      }
+    }
+
+    currentNode = walker.nextNode()
+  }
+
+  return hasTextContent && styleSpan ? styleSpan.style[styleProp] : ''
+}
+
+const promoteListTextStyle = (html: string) => {
+  if (!/<(ul|ol)\b/i.test(html) || (!/font-size\s*:/i.test(html) && !/color\s*:/i.test(html))) return html
+
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(html, 'text/html')
+  const lists = doc.body.querySelectorAll<HTMLElement>('ul, ol')
+
+  lists.forEach(list => {
+    const listItems = Array.from(list.children).filter(child => child.tagName === 'LI') as HTMLLIElement[]
+    if (!listItems.length) return
+
+    if (!list.style.fontSize) {
+      let fontSize = ''
+      for (const li of listItems) {
+        const currentFontSize = getListItemStyleValue(li, 'fontSize')
+        if (!currentFontSize) {
+          fontSize = ''
+          break
+        }
+        if (!fontSize) fontSize = currentFontSize
+        else if (fontSize !== currentFontSize) {
+          fontSize = ''
+          break
+        }
+      }
+      if (fontSize) list.style.fontSize = fontSize
+    }
+
+    if (!list.style.color) {
+      let color = ''
+      for (const li of listItems) {
+        const currentColor = getListItemStyleValue(li, 'color')
+        if (!currentColor) {
+          color = ''
+          break
+        }
+        if (!color) color = currentColor
+        else if (color !== currentColor) {
+          color = ''
+          break
+        }
+      }
+      if (color) list.style.color = color
+    }
+  })
+
+  return doc.body.innerHTML
+}
+
+const normalizeIndentValue = (indent: string, ratio: number) => {
+  const value = parseFloat(indent)
+  if (!value || value < 0) return 0
+
+  let indentValue = 0
+  if (indent.indexOf('em') !== -1) {
+    indentValue = parseInt(indent)
+  }
+  else if (indent.indexOf('px') !== -1) {
+    indentValue = Math.floor(parseInt(indent) / 16)
+    if (!indentValue) indentValue = 1
+  }
+  else if (indent.indexOf('pt') !== -1) {
+    indentValue = Math.floor(value * ratio / 16)
+    if (!indentValue) indentValue = 1
+  }
+
+  if (indentValue > 8) indentValue = 8
+
+  return indentValue
+}
+
 const convertTextContent = (html: string, ratio: number) => {
-  return html.replace(/font-size:\s*([\d.]+)pt/g, (match, p1) => {
+  if (!html) return ''
+  const processedHtml = html.replace(/font-size:\s*([\d.]+)pt/g, (match, p1) => {
     return `font-size: ${Math.floor(parseFloat(p1) * ratio)}px`
-  }).replace(/&nbsp;/g, ' ')
+  }).replace(/&nbsp;/g, ' ').replace(/style="([^"]*)"/g, (match, styleStr: string) => {
+    let newStyle = styleStr
+    const gradientMatch = styleStr.match(/background:\s*(linear-gradient\([^)]+\))/)
+
+    if (gradientMatch) {
+      const colorMatches = gradientMatch[1].match(/#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}|rgba?\([^)]+\)/g)
+      if (colorMatches && colorMatches.length) {
+        const colors = colorMatches.map(c => tinycolor(c))
+        const avgColor = colors.reduce((acc, c) => {
+          const rgb = c.toRgb()
+          return {
+            r: acc.r + rgb.r / colors.length,
+            g: acc.g + rgb.g / colors.length,
+            b: acc.b + rgb.b / colors.length,
+          }
+        }, { r: 0, g: 0, b: 0 })
+        const hexColor = tinycolor(avgColor).toHexString()
+
+        newStyle = newStyle
+          .replace(/background:\s*linear-gradient\([^)]+\)\s*;?/g, '')
+          .replace(/background-clip:\s*text\s*;?/g, '')
+          .replace(/color:\s*transparent\s*;?/g, '')
+        newStyle = `color: ${hexColor}; ${newStyle}`
+      }
+    }
+
+    const marginLeftMatch = newStyle.match(/margin-left\s*:\s*([^;]+);?/i)
+    const indentValue = marginLeftMatch ? normalizeIndentValue(marginLeftMatch[1], ratio) : 0
+
+    newStyle = newStyle
+      .replace(/margin-(top|bottom|left)\s*:\s*[^;]+;?/g, '')
+      .replace(/text-indent\s*:\s*([^;]+);?/g, (match, p1) => {
+        const textIndentValue = normalizeIndentValue(p1, ratio)
+        return textIndentValue ? `text-indent: ${textIndentValue}em;` : ''
+      })
+      .replace(/;\s*;/g, ';')
+      .replace(/^\s*;\s*/, '')
+      .replace(/;\s*$/, ';')
+      .trim()
+
+    return [
+      indentValue ? `data-indent="${indentValue}"` : '',
+      newStyle ? `style="${newStyle}"` : '',
+    ].filter(Boolean).join(' ')
+  })
+
+  return promoteListTextStyle(processedHtml)
 }
 
 const getMaxFontSize = (html: string, defaultFontSize: number = 18): number => {
@@ -51,7 +224,7 @@ const getMaxFontSize = (html: string, defaultFontSize: number = 18): number => {
 }
 
 const getParagraphMetrics = (html: string, ratio: number) => {
-  const tagRegex = /<(div|p|li)(?![a-z0-9])[^>]*>/gi
+  const tagRegex = /<(div|p)(?![a-z0-9])[^>]*>/gi
 
   const lineHeights = []
   const margins = []
@@ -147,7 +320,7 @@ const getParagraphMetrics = (html: string, ratio: number) => {
 
 export default () => {
   const slidesStore = useSlidesStore()
-  const { theme } = storeToRefs(useSlidesStore())
+  const { theme, viewportRatio, viewportSize } = storeToRefs(slidesStore)
 
   const { addHistorySnapshot } = useHistorySnapshot()
   const { addSlidesFromData } = useAddSlidesOrElements()
@@ -162,14 +335,21 @@ export default () => {
     const reader = new FileReader()
     reader.addEventListener('load', () => {
       try {
-        const { slides, theme } = JSON.parse(reader.result as string)
+        const { title, slides, theme, width, height } = JSON.parse(reader.result as string)
+        const aspectRatio = getAspectRatio(width, height)
+
         if (cover) {
           slidesStore.updateSlideIndex(0)
           slidesStore.setSlides(slides, (theme || {}))
+          if (title) slidesStore.setTitle(title)
+          if (aspectRatio !== viewportRatio.value) slidesStore.setViewportRatio(aspectRatio)
+          if (width && width !== viewportSize) slidesStore.setViewportSize(width)
           addHistorySnapshot()
         }
         else if (isEmptySlide.value) {
           slidesStore.setSlides(slides, (theme || {}))
+          if (aspectRatio !== viewportRatio.value) slidesStore.setViewportRatio(aspectRatio)
+          if (width && width !== viewportSize) slidesStore.setViewportSize(width)
           addHistorySnapshot()
         }
         else addSlidesFromData(slides)
@@ -188,14 +368,21 @@ export default () => {
     const reader = new FileReader()
     reader.addEventListener('load', () => {
       try {
-        const { slides, theme } = JSON.parse(decrypt(reader.result as string))
+        const { title, slides, theme, width, height } = JSON.parse(decrypt(reader.result as string))
+        const aspectRatio = getAspectRatio(width, height)
+
         if (cover) {
           slidesStore.updateSlideIndex(0)
           slidesStore.setSlides(slides, (theme || {}))
+          if (title) slidesStore.setTitle(title)
+          if (aspectRatio !== viewportRatio.value) slidesStore.setViewportRatio(aspectRatio)
+          if (width && width !== viewportSize) slidesStore.setViewportSize(width)
           addHistorySnapshot()
         }
         else if (isEmptySlide.value) {
           slidesStore.setSlides(slides, (theme || {}))
+          if (aspectRatio !== viewportRatio.value) slidesStore.setViewportRatio(aspectRatio)
+          if (width && width !== viewportSize) slidesStore.setViewportSize(width)
           addHistorySnapshot()
         }
         else addSlidesFromData(slides)
@@ -256,10 +443,17 @@ export default () => {
     }
   }
 
+  const parseLineEnd = (lineEnd?: { type?: string }): LinePoint => {
+    if (!lineEnd || !lineEnd.type || lineEnd.type === 'none') return ''
+    if (['triangle', 'stealth', 'arrow'].includes(lineEnd.type)) return 'arrow'
+    if (['diamond', 'oval'].includes(lineEnd.type)) return 'dot'
+    return ''
+  }
+
   const parseLineElement = (el: Shape, ratio: number) => {
     let start: [number, number] = [0, 0]
     let end: [number, number] = [0, 0]
-
+    let rotateOffset: [number, number] = [0, 0]
     if (!el.isFlipV && !el.isFlipH) { // 右下
       start = [0, 0]
       end = [el.width, el.height]
@@ -287,7 +481,7 @@ export default () => {
       end,
       style: el.borderType,
       color: el.borderColor,
-      points: ['', /straightConnector/.test(el.shapType) ? 'arrow' : '']
+      points: [parseLineEnd(el.headEnd), parseLineEnd(el.tailEnd)]
     }
     if (el.rotate) {
       const { start, end, offset } = rotateLine(data, el.rotate)
@@ -296,12 +490,81 @@ export default () => {
       data.end = end
       data.left = data.left + offset[0]
       data.top = data.top + offset[1]
+      rotateOffset = [offset[0], offset[1]]
     }
     if (/bentConnector/.test(el.shapType)) {
-      data.broken2 = [
-        Math.abs(data.start[0] - data.end[0]) / 2,
-        Math.abs(data.start[1] - data.end[1]) / 2,
-      ]
+      const setDefaultBroken2 = () => {
+        data.broken2 = [
+          Math.abs(data.start[0] - data.end[0]) / 2,
+          Math.abs(data.start[1] - data.end[1]) / 2,
+        ]
+      }
+
+      const getPathPoints = (maxLength: number) => {
+        if (!el.path) return []
+
+        return toPoints(el.path).map(point => {
+          if (!('x' in point) || !('y' in point)) return null
+          if (typeof point.x !== 'number' || typeof point.y !== 'number') return null
+
+          let x = el.pathViewBox?.width ? point.x / el.pathViewBox.width * el.width : point.x * ratio
+          let y = el.pathViewBox?.height ? point.y / el.pathViewBox.height * el.height : point.y * ratio
+
+          if (el.isFlipH) x = el.width - x
+          if (el.isFlipV) y = el.height - y
+
+          if (el.rotate) {
+            const angleRad = el.rotate * Math.PI / 180
+            const midX = (start[0] + end[0]) / 2
+            const midY = (start[1] + end[1]) / 2
+            const xTrans = x - midX
+            const yTrans = y - midY
+            const xRot = xTrans * Math.cos(angleRad) - yTrans * Math.sin(angleRad) + midX
+            const yRot = xTrans * Math.sin(angleRad) + yTrans * Math.cos(angleRad) + midY
+            const beforeMinX = Math.min(start[0], end[0])
+            const beforeMinY = Math.min(start[1], end[1])
+            x = xRot - beforeMinX - rotateOffset[0]
+            y = yRot - beforeMinY - rotateOffset[1]
+          }
+
+          return [x, y]
+        }).filter((point): point is [number, number] => !!point).slice(0, maxLength)
+      }
+
+      if (el.shapType === 'bentConnector2') {
+        const pathPoints = getPathPoints(3)
+
+        if (
+          pathPoints.length >= 3 &&
+          pathPoints.every(point => Number.isFinite(point[0]) && Number.isFinite(point[1]))
+        ) {
+          const deltaX = Math.abs(pathPoints[1][0] - pathPoints[0][0])
+          const deltaY = Math.abs(pathPoints[1][1] - pathPoints[0][1])
+          data.broken = deltaX >= deltaY ? [data.start[0], data.end[1]] : [data.end[0], data.start[1]]
+        }
+        else data.broken = [data.start[0], data.end[1]]
+      }
+      else if (el.shapType === 'bentConnector3') {
+        const pathPoints = getPathPoints(4)
+
+        if (
+          pathPoints.length >= 4 &&
+          pathPoints.every(point => Number.isFinite(point[0]) && Number.isFinite(point[1]))
+        ) {
+          const mid1 = pathPoints[1]
+          const mid2 = pathPoints[2]
+          const deltaX = Math.abs(pathPoints[1][0] - pathPoints[0][0])
+          const deltaY = Math.abs(pathPoints[1][1] - pathPoints[0][1])
+
+          data.broken2 = [
+            (mid1[0] + mid2[0]) / 2,
+            (mid1[1] + mid2[1]) / 2,
+          ]
+          data.broken2Direction = deltaX >= deltaY ? 'horizontal' : 'vertical'
+        }
+        else setDefaultBroken2()
+      }
+      else setDefaultBroken2()
     }
     if (/curvedConnector/.test(el.shapType)) {
       const cubic: [number, number] = [
@@ -403,7 +666,11 @@ export default () => {
     reader.onload = async e => {
       let json = null
       try {
-        json = await parse(e.target!.result as ArrayBuffer)
+        json = await parse(e.target!.result as ArrayBuffer, {
+          imageMode: 'base64',
+          videoMode: 'blob',
+          audioMode: 'blob',
+        })
       }
       catch {
         exporting.value = false
@@ -411,8 +678,13 @@ export default () => {
         return
       }
 
+      if (json.usedFonts && json.usedFonts.length) loadGoogleFonts(json.usedFonts)
+
       let ratio = 96 / 72
       const width = json.size.width
+      const height = json.size.height
+
+      const aspectRatio = getAspectRatio(width, height)
       
       if (fixedViewport) ratio = 1000 / width
       else slidesStore.setViewportSize(width * ratio)
@@ -427,7 +699,7 @@ export default () => {
           background = {
             type: 'image',
             image: {
-              src: value.picBase64,
+              src: value.base64,
               size: 'cover',
             },
           }
@@ -441,7 +713,7 @@ export default () => {
                 ...item,
                 pos: parseInt(item.pos),
               })),
-              rotate: value.rot + 90,
+              rotate: value.rot,
             },
           }
         }
@@ -469,89 +741,73 @@ export default () => {
           const sortedElements = elements.sort((a, b) => a.order - b.order)
 
           for (const el of sortedElements) {
-            const originWidth = el.width || 1
-            const originHeight = el.height || 1
-            const originLeft = el.left
-            const originTop = el.top
+            let backstopSize = 1
 
-            el.width = el.width * ratio
-            el.height = el.height * ratio
-            el.left = el.left * ratio
-            el.top = el.top * ratio
+            if (el.type === 'shape') {
+              if (el.shapType === 'line' || /straightConnector/.test(el.shapType) || /bentConnector/.test(el.shapType) || /curvedConnector/.test(el.shapType)) {
+                backstopSize = 0
+              }
+            }
+
+            const originWidth = el.width || backstopSize
+            const originHeight = el.height || backstopSize
+            const originLeft = el.left || 0
+            const originTop = el.top || 0
+
+            el.width = originWidth * ratio
+            el.height = originHeight * ratio
+            el.left = originLeft * ratio
+            el.top = originTop * ratio
   
             if (el.type === 'text') {
-              if (el.autoFit && el.autoFit.type === 'text') {
-                const fontScale = ratio * (el.autoFit.fontScale || 100) / 100
-                const metrics = getParagraphMetrics(el.content, fontScale)
-                const shapeEl: PPTShapeElement = {
-                  type: 'shape',
-                  id: nanoid(10),
-                  width: el.width,
-                  height: el.height,
-                  left: el.left,
-                  top: el.top,
-                  rotate: el.rotate,
-                  viewBox: [200, 200],
-                  path: 'M 0 0 L 200 0 L 200 200 L 0 200 Z',
-                  fill: el.fill.type === 'color' ? el.fill.value : '',
-                  fixedRatio: false,
-                  outline: {
-                    color: el.borderColor,
-                    width: +(el.borderWidth * ratio).toFixed(2),
-                    style: el.borderType,
-                  },
-                  text: {
-                    content: convertTextContent(el.content, fontScale),
-                    defaultFontName: theme.value.fontName,
-                    defaultColor: theme.value.fontColor,
-                    align: shapeVAlignMap[el.vAlign] || 'middle',
-                    lineHeight: 1,
-                  },
-                }
-                if (metrics.lineHeight) shapeEl.text!.lineHeight = metrics.lineHeight
-                if (metrics.margin) shapeEl.text!.paragraphSpace = metrics.margin
-                slide.elements.push(shapeEl)
+              const autoFitType = el.autoFit?.type
+              const isSelfAdaptive = autoFitType === 'shape'
+              const fontScale = autoFitType === 'text' ? (el.autoFit!.fontScale || 100) / 100 : 1
+              const textRatio = ratio * fontScale
+              const metrics = getParagraphMetrics(el.content, textRatio)
+              const textEl: PPTTextElement = {
+                type: 'text',
+                id: nanoid(10),
+                width: el.width,
+                height: el.height,
+                left: el.left,
+                top: el.top,
+                rotate: el.rotate,
+                defaultFontName: theme.value.fontName,
+                defaultColor: theme.value.fontColor,
+                content: convertTextContent(el.content, textRatio),
+                lineHeight: 1,
+                outline: {
+                  color: el.borderColor,
+                  width: +(el.borderWidth * ratio).toFixed(2),
+                  style: el.borderType,
+                },
+                fill: el.fill?.type === 'color' ? el.fill.value : '',
+                vertical: el.isVertical,
               }
-              else {
-                const metrics = getParagraphMetrics(el.content, ratio)
-                const textEl: PPTTextElement = {
-                  type: 'text',
-                  id: nanoid(10),
-                  width: el.width,
-                  height: el.height,
-                  left: el.left,
-                  top: el.top,
-                  rotate: el.rotate,
-                  defaultFontName: theme.value.fontName,
-                  defaultColor: theme.value.fontColor,
-                  content: convertTextContent(el.content, ratio),
-                  lineHeight: 1,
-                  outline: {
-                    color: el.borderColor,
-                    width: +(el.borderWidth * ratio).toFixed(2),
-                    style: el.borderType,
-                  },
-                  fill: el.fill.type === 'color' ? el.fill.value : '',
-                  vertical: el.isVertical,
-                }
-                if (el.shadow) {
-                  textEl.shadow = {
-                    h: el.shadow.h * ratio,
-                    v: el.shadow.v * ratio,
-                    blur: el.shadow.blur * ratio,
-                    color: el.shadow.color,
-                  }
-                }
-                slide.elements.push(textEl)
-                if (metrics.lineHeight) textEl.lineHeight = metrics.lineHeight
-                if (metrics.margin) textEl.paragraphSpace = metrics.margin
+              if (!isSelfAdaptive) {
+                textEl.fixedHeight = true
+                textEl.vAlign = vAlignMap[el.vAlign] || 'top'
               }
+              if (el.shadow) {
+                textEl.shadow = {
+                  h: el.shadow.h * ratio,
+                  v: el.shadow.v * ratio,
+                  blur: el.shadow.blur * ratio,
+                  color: el.shadow.color,
+                }
+              }
+              if (el.link) textEl.link = { type: 'web', target: el.link }
+              if (el.textInset) textEl.inset = [el.textInset.t, el.textInset.r, el.textInset.b, el.textInset.l]
+              if (metrics.lineHeight) textEl.lineHeight = metrics.lineHeight
+              if (metrics.margin) textEl.paragraphSpace = metrics.margin
+              slide.elements.push(textEl)
             }
             else if (el.type === 'image') {
               const element: PPTImageElement = {
                 type: 'image',
                 id: nanoid(10),
-                src: el.src,
+                src: el.base64,
                 width: el.width,
                 height: el.height,
                 left: el.left,
@@ -568,7 +824,25 @@ export default () => {
                   style: el.borderType,
                 }
               }
-              const clipShapeTypes = ['rect', 'roundRect', 'ellipse', 'triangle', 'rhombus', 'pentagon', 'hexagon', 'heptagon', 'octagon', 'parallelogram', 'trapezoid']
+              const clipShapeTypes = [
+                'rect',
+                'snip1Rect',
+                'snip2DiagRect',
+                'roundRect',
+                'ellipse',
+                'triangle',
+                'rtTriangle',
+                'diamond',
+                'pentagon',
+                'hexagon',
+                'heptagon',
+                'octagon',
+                'chevron',
+                'homePlate',
+                'rightArrow',
+                'parallelogram',
+                'trapezoid'
+              ]
               let geom = el.geom || 'rect'
               if (geom.indexOf('custom:') !== -1) geom = geom.replace('custom:', '')
               if (!clipShapeTypes.includes(geom)) geom = 'rect'
@@ -594,6 +868,8 @@ export default () => {
                   range: [[0, 0], [100, 100]]
                 }
               }
+
+              if (el.link) element.link = { type: 'web', target: el.link }
               slide.elements.push(element)
             }
             else if (el.type === 'math') {
@@ -609,7 +885,7 @@ export default () => {
                 rotate: 0,
               })
             }
-            else if (el.type === 'audio') {
+            else if (el.type === 'audio' && el.blob) {
               slide.elements.push({
                 type: 'audio',
                 id: nanoid(10),
@@ -625,11 +901,11 @@ export default () => {
                 autoplay: false,
               })
             }
-            else if (el.type === 'video') {
+            else if (el.type === 'video' && el.blob) {
               slide.elements.push({
                 type: 'video',
                 id: nanoid(10),
-                src: (el.blob || el.src)!,
+                src: el.blob,
                 width: el.width,
                 height: el.height,
                 left: el.left,
@@ -655,9 +931,9 @@ export default () => {
                   rotate: el.fill.value.rot,
                 } : undefined
 
-                const pattern: string | undefined = el.fill?.type === 'image' ? el.fill.value.picBase64 : undefined
+                const pattern: string | undefined = el.fill?.type === 'image' ? el.fill.value.base64 : undefined
 
-                const fill = el.fill?.type === 'color' ? el.fill.value : ''
+                const fill = (!el.strokeOnly && el.fill?.type === 'color') ? el.fill.value : ''
 
                 const metrics = getParagraphMetrics(el.content, ratio)
                 
@@ -684,11 +960,13 @@ export default () => {
                     content: convertTextContent(el.content, ratio),
                     defaultFontName: theme.value.fontName,
                     defaultColor: theme.value.fontColor,
-                    align: shapeVAlignMap[el.vAlign] || 'middle',
+                    align: vAlignMap[el.vAlign] || 'middle',
                   },
                   flipH: el.isFlipH,
                   flipV: el.isFlipV,
                 }
+                if (el.link) element.link = { type: 'web', target: el.link }
+                if (el.textInset) element.text!.inset = [el.textInset.t, el.textInset.r, el.textInset.b, el.textInset.l]
                 if (metrics.lineHeight) element.text!.lineHeight = metrics.lineHeight
                 if (metrics.margin) element.text!.paragraphSpace = metrics.margin
 
@@ -787,13 +1065,32 @@ export default () => {
                   }
                 }
                 else if (el.path && el.path.indexOf('NaN') === -1) {
-                  const { maxX, maxY } = getSvgPathRange(el.path)
                   element.path = el.path
-                  if ((maxX / maxY) > (originWidth / originHeight)) {
-                    element.viewBox = [maxX, maxX * originHeight / originWidth]
+                  const fixedViewBoxPresetShapeTypes = [
+                    'blockArc',
+                    'pie',
+                    'pieWedge',
+                    'arc',
+                    'chord',
+                    'teardrop',
+                    'mathPlus',
+                    'mathMinus',
+                    'mathMultiply',
+                    'mathDivide',
+                    'mathEqual',
+                    'mathNotEqual',
+                  ]
+                  if (fixedViewBoxPresetShapeTypes.includes(el.shapType) && el.pathViewBox) {
+                    element.viewBox = [el.pathViewBox.width, el.pathViewBox.height]
                   }
                   else {
-                    element.viewBox = [maxY * originWidth / originHeight, maxY]
+                    const { maxX, maxY } = getSvgPathRange(el.path)
+                    if ((maxX / maxY) > (originWidth / originHeight)) {
+                      element.viewBox = [maxX, maxX * originHeight / originWidth]
+                    }
+                    else {
+                      element.viewBox = [maxY * originWidth / originHeight, maxY]
+                    }
                   }
                 }
                 if (el.shapType === 'custom') {
@@ -803,7 +1100,6 @@ export default () => {
                     element.path = el.path!.replace(/NaN/g, '0')
                   }
                   else {
-                    element.special = true
                     element.path = el.path!
                   }
                   const { maxX, maxY } = getSvgPathRange(element.path)
@@ -841,6 +1137,12 @@ export default () => {
                   const fontsize = span?.style.fontSize ? (parseInt(span?.style.fontSize) * ratio).toFixed(1) + 'px' : ''
                   const fontname = span?.style.fontFamily || ''
                   const color = span?.style.color || cellData.fontColor
+                  const fontWeight = span?.style.fontWeight || ''
+                  const bold = fontWeight === 'bold' || +fontWeight >= 600 || cellData.fontBold
+                  const em = span?.style.fontStyle === 'italic'
+                  const textDecoration = span?.style.textDecoration || ''
+                  const underline = textDecoration.includes('underline')
+                  const strikethrough = textDecoration.includes('line-through')
 
                   rowCells.push({
                     id: nanoid(10),
@@ -849,11 +1151,15 @@ export default () => {
                     text: textDiv.innerText,
                     style: {
                       ...style,
+                      vAlign: vAlignMap[cellData.vAlign] || 'middle',
                       align: ['left', 'right', 'center'].includes(align) ? (align as 'left' | 'right' | 'center') : 'left',
                       fontsize,
                       fontname,
                       color,
-                      bold: cellData.fontBold,
+                      bold,
+                      em,
+                      underline,
+                      strikethrough,
                       backcolor: cellData.fillColor,
                     },
                   })
@@ -865,15 +1171,29 @@ export default () => {
               const allWidth = el.colWidths.reduce((a, b) => a + b, 0)
               const colWidths: number[] = el.colWidths.map(item => item / allWidth)
 
-              const firstCell = el.data[0][0]
-              const border = firstCell.borders.top ||
-                firstCell.borders.bottom ||
-                el.borders.top ||
-                el.borders.bottom ||
-                firstCell.borders.left ||
-                firstCell.borders.right ||
-                el.borders.left ||
-                el.borders.right
+              const isVisibleBorder = (b?: { borderColor?: string; borderWidth?: number }) => {
+                if (!b || !b.borderWidth) return false
+                const c = b.borderColor || ''
+                if (/^#[0-9a-fA-F]{8}$/.test(c) && c.slice(-2).toLowerCase() === '00') return false
+                return true
+              }
+              const borderCounter = new Map<string, { border: any; count: number }>()
+              const collectBorders = (borders?: Record<string, any>) => {
+                if (!borders) return
+                for (const side of ['top', 'bottom', 'left', 'right'] as const) {
+                  const b = borders[side]
+                  if (!isVisibleBorder(b)) continue
+                  const key = `${b.borderColor}|${b.borderWidth}|${b.borderType}`
+                  const hit = borderCounter.get(key)
+                  if (hit) hit.count++
+                  else borderCounter.set(key, { border: b, count: 1 })
+                }
+              }
+              collectBorders(el.borders)
+              for (const rowCells of el.data) {
+                for (const cell of rowCells) collectBorders(cell.borders)
+              }
+              const border = [...borderCounter.values()].sort((a, b) => b.count - a.count)[0]?.border
               const borderWidth = border?.borderWidth || 0
               const borderStyle = border?.borderType || 'solid'
               const borderColor = border?.borderColor || '#eeece1'
@@ -903,7 +1223,11 @@ export default () => {
   
               if (el.chartType === 'scatterChart' || el.chartType === 'bubbleChart') {
                 labels = el.data[0].map((item, index) => `坐标${index + 1}`)
-                legends = ['X', 'Y']
+                legends = el.data.map((item, index) => {
+                  if (index === 0) return 'X'
+                  if (index === 1) return 'Y'
+                  return `Y${index}`
+                })
                 series = el.data
               }
               else {
@@ -1028,10 +1352,12 @@ export default () => {
       if (cover) {
         slidesStore.updateSlideIndex(0)
         slidesStore.setSlides(slides)
+        if (aspectRatio !== viewportRatio.value) slidesStore.setViewportRatio(aspectRatio)
         addHistorySnapshot()
       }
       else if (isEmptySlide.value) {
         slidesStore.setSlides(slides)
+        if (aspectRatio !== viewportRatio.value) slidesStore.setViewportRatio(aspectRatio)
         addHistorySnapshot()
       }
       else addSlidesFromData(slides)
